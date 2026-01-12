@@ -9,7 +9,28 @@ def init_connection():
 
 supabase = init_connection()
 
-# --- 2. POBIERANIE DANYCH ---
+# --- 2. RÓŻOWE TŁO (CSS) ---
+st.markdown("""
+    <style>
+    /* Główne tło strony */
+    .stApp {
+        background-color: #FFF0F5; 
+    }
+    
+    /* Tło panelu bocznego */
+    section[data-testid="stSidebar"] {
+        background-color: #FFB6C1 !important;
+    }
+
+    /* Dopasowanie koloru tekstu w panelu bocznym dla czytelności */
+    section[data-testid="stSidebar"] .stMarkdown, 
+    section[data-testid="stSidebar"] label {
+        color: #31333F !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. POBIERANIE DANYCH ---
 def get_data():
     res = supabase.table("produkt").select("id, nazwa, liczba, cena, kategoria_id, kategorie(nazwa)").execute()
     if not res.data:
@@ -26,40 +47,40 @@ def get_data():
         })
     return pd.DataFrame(flat_data).sort_values(by="Produkt")
 
-# --- 3. INTERFEJS ---
-st.set_page_config(page_title="Magazyn Supabase", layout="wide")
-st.markdown("# 📦 Inteligentny Magazyn")
+# --- 4. INTERFEJS UŻYTKOWNIKA ---
+st.set_page_config(page_title="System Zarządzania Magazynem", layout="wide")
+st.title("Zarządzanie Magazynem")
 
 df = get_data()
 
-# --- 4. STATYSTYKI ---
+# --- 5. STATYSTYKI ---
 if not df.empty:
     m1, m2, m3 = st.columns(3)
-    m1.metric("📦 Suma sztuk", int(df["Ilość"].sum()))
-    m2.metric("💰 Wartość", f"{(df['Ilość'] * df['Cena']).sum():,.2f} PLN")
-    m3.metric("🏷️ Kategorie", len(df["Kategoria"].unique()))
+    m1.metric("Łączna liczba produktów", int(df["Ilość"].sum()))
+    m2.metric("Wartość magazynu", f"{(df['Ilość'] * df['Cena']).sum():,.2f} PLN")
+    m3.metric("Liczba kategorii", len(df["Kategoria"].unique()))
     st.divider()
 
-# --- 5. WYKRESY ---
+# --- 6. WYKRESY ---
 if not df.empty:
-    st.subheader("📊 Stan magazynowy")
+    st.subheader("Stan asortymentu")
     st.bar_chart(data=df, x="Produkt", y="Ilość", color="Kategoria")
 
-# --- 6. PANEL BOCZNY (OPERACJE) ---
+# --- 7. PANEL BOCZNY (OPERACJE) ---
 with st.sidebar:
-    st.header("⚙️ Zarządzanie")
+    st.header("Panel sterowania")
 
-    # A. DODAWANIE NOWEGO PRODUKTU
-    with st.expander("➕ Dodaj nowy produkt"):
+    # Dodawanie nowego produktu
+    with st.expander("Dodaj nowy produkt"):
         kat_res = supabase.table("kategorie").select("id, nazwa").execute()
         opcje_kat = {item['nazwa']: item['id'] for item in kat_res.data}
         
-        p_nazwa = st.text_input("Nazwa")
-        p_ilosc = st.number_input("Ilość startowa", min_value=1)
-        p_cena = st.number_input("Cena", min_value=0.0)
-        p_kat = st.selectbox("Kategoria", options=list(opcje_kat.keys()))
+        p_nazwa = st.text_input("Nazwa artykułu")
+        p_ilosc = st.number_input("Ilość początkowa", min_value=1)
+        p_cena = st.number_input("Cena jednostkowa", min_value=0.0)
+        p_kat = st.selectbox("Wybierz kategorię", options=list(opcje_kat.keys()))
         
-        if st.button("Dodaj do bazy"):
+        if st.button("Zatwierdź produkt"):
             supabase.table("produkt").insert({
                 "nazwa": p_nazwa, "liczba": p_ilosc, "cena": p_cena, "kategoria_id": opcje_kat[p_kat]
             }).execute()
@@ -67,39 +88,22 @@ with st.sidebar:
 
     st.divider()
 
-    # B. USUWANIE KONKRETNEJ ILOŚCI (ZDJĘCIE ZE STANU)
-    st.subheader("📉 Zdejmij ze stanu")
+    # Zdejmowanie określonej ilości (Twoja prośba)
+    st.subheader("Wydanie z magazynu")
     if not df.empty:
-        wybrany_prod = st.selectbox("Wybierz produkt", df["Produkt"].tolist())
-        # Pobieramy aktualną ilość z DataFrame
+        wybrany_prod = st.selectbox("Produkt do wydania", df["Produkt"].tolist())
         aktualna_ilosc = df[df["Produkt"] == wybrany_prod]["Ilość"].values[0]
         wybrane_id = df[df["Produkt"] == wybrany_prod]["ID"].values[0]
         
-        st.caption(f"Aktualnie w magazynie: {aktualna_ilosc}")
-        ilosc_do_odjecia = st.number_input("Ile sztuk usunąć?", min_value=1, max_value=int(aktualna_ilosc))
+        st.write(f"Dostępny stan: **{aktualna_ilosc}**")
+        ile_usunac = st.number_input("Ilość do odjęcia", min_value=1, max_value=int(aktualna_ilosc))
 
-        if st.button("Usuń wskazaną ilość", type="primary"):
-            nowa_ilosc = aktualna_ilosc - ilosc_do_odjecia
-            
-            if nowa_ilosc > 0:
-                # Aktualizujemy liczbę
-                supabase.table("produkt").update({"liczba": nowa_ilosc}).eq("id", int(wybrane_id)).execute()
-                st.toast(f"Usunięto {ilosc_do_odjecia} szt. Pozostało: {nowa_ilosc}")
-            else:
-                # Jeśli zero, pytamy czy usunąć cały rekord, albo po prostu zerujemy
-                supabase.table("produkt").update({"liczba": 0}).eq("id", int(wybrane_id)).execute()
-                st.toast("Produkt został wyzerowany w magazynie!")
-            
+        if st.button("Aktualizuj stan", type="primary"):
+            nowa_ilosc = aktualna_ilosc - ile_usunac
+            supabase.table("produkt").update({"liczba": nowa_ilosc}).eq("id", int(wybrane_id)).execute()
+            st.success(f"Zaktualizowano stan produktu: {wybrany_prod}")
             st.rerun()
 
-    # C. CAŁKOWITE USUNIĘCIE Z BAZY
-    with st.expander("🗑️ Usuń produkt całkowicie"):
-        prod_del = st.selectbox("Produkt do skasowania", df["Produkt"].tolist(), key="del_total")
-        id_del = df[df["Produkt"] == prod_del]["ID"].values[0]
-        if st.button("SKASUJ REKORD", type="secondary"):
-            supabase.table("produkt").delete().eq("id", int(id_del)).execute()
-            st.rerun()
-
-# --- 7. TABELA PODGLĄDU ---
-st.subheader("📋 Aktualna lista")
+# --- 8. TABELA PODGLĄDU ---
+st.subheader("Aktualny wykaz zapasów")
 st.dataframe(df[["Produkt", "Ilość", "Cena", "Kategoria"]], use_container_width=True, hide_index=True)
