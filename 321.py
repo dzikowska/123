@@ -11,12 +11,10 @@ supabase = init_connection()
 
 # --- 2. POBIERANIE DANYCH ---
 def get_data():
-    # Pobieramy produkty z nazwami kategorii (join)
     res = supabase.table("produkt").select("id, nazwa, liczba, cena, kategoria_id, kategorie(nazwa)").execute()
     if not res.data:
         return pd.DataFrame()
     
-    # Mapowanie danych do ładnej tabeli
     flat_data = []
     for row in res.data:
         flat_data.append({
@@ -26,80 +24,82 @@ def get_data():
             "Cena": row["cena"],
             "Kategoria": row["kategorie"]["nazwa"] if row["kategorie"] else "Brak"
         })
-    return pd.DataFrame(flat_data)
+    return pd.DataFrame(flat_data).sort_values(by="Produkt")
 
-# --- 3. INTERFEJS UŻYTKOWNIKA ---
+# --- 3. INTERFEJS ---
 st.set_page_config(page_title="Magazyn Supabase", layout="wide")
+st.markdown("# 📦 Inteligentny Magazyn")
 
-# Nagłówek z kolorem (używamy emoji i markdown)
-st.markdown("# 📦 Zarządzanie Magazynem")
-st.write("Aplikacja połączona bezpośrednio z Twoją bazą danych.")
-
-# Pobieramy dane
 df = get_data()
 
-# --- 4. STATYSTYKI (WIZUALNE BAJERY) ---
+# --- 4. STATYSTYKI ---
 if not df.empty:
     m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("Łącznie produktów", df["Ilość"].sum())
-    with m2:
-        wartosc = (df["Ilość"] * df["Cena"]).sum()
-        st.metric("Wartość magazynu", f"{wartosc:.2f} PLN", delta=f"{len(df)} pozycji")
-    with m3:
-        najdrozszy = df.loc[df['Cena'].idxmax()]['Produkt']
-        st.metric("Najdroższy produkt", najdrozszy)
-
+    m1.metric("📦 Suma sztuk", int(df["Ilość"].sum()))
+    m2.metric("💰 Wartość", f"{(df['Ilość'] * df['Cena']).sum():,.2f} PLN")
+    m3.metric("🏷️ Kategorie", len(df["Kategoria"].unique()))
     st.divider()
 
-# --- 5. WYKRESY (NATYWNE DLA STREAMLIT) ---
+# --- 5. WYKRESY ---
 if not df.empty:
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
-        st.subheader("📊 Stan ilościowy")
-        # Wykres słupkowy ilości produktów
-        st.bar_chart(data=df, x="Produkt", y="Ilość", color="Kategoria")
+    st.subheader("📊 Stan magazynowy")
+    st.bar_chart(data=df, x="Produkt", y="Ilość", color="Kategoria")
 
-    with col_chart2:
-        st.subheader("💰 Porównanie cen")
-        # Wykres liniowy/obszarowy cen
-        st.area_chart(data=df, x="Produkt", y="Cena")
-
-# --- 6. FORMULARZE (SIDEBAR) ---
+# --- 6. PANEL BOCZNY (OPERACJE) ---
 with st.sidebar:
-    st.header("⚙️ Operacje")
-    
-    # Dodawanie Kategorii
-    with st.expander("🆕 Nowa Kategoria"):
-        nowa_kat = st.text_input("Nazwa kategorii")
-        if st.button("Dodaj kategorię"):
-            supabase.table("kategorie").insert({"nazwa": nowa_kat}).execute()
-            st.success("Dodano!")
-            st.rerun()
+    st.header("⚙️ Zarządzanie")
 
-    # Dodawanie Produktu
-    with st.expander("🆕 Nowy Produkt"):
+    # A. DODAWANIE NOWEGO PRODUKTU
+    with st.expander("➕ Dodaj nowy produkt"):
         kat_res = supabase.table("kategorie").select("id, nazwa").execute()
         opcje_kat = {item['nazwa']: item['id'] for item in kat_res.data}
         
         p_nazwa = st.text_input("Nazwa")
-        p_ilosc = st.number_input("Ilość", min_value=0)
+        p_ilosc = st.number_input("Ilość startowa", min_value=1)
         p_cena = st.number_input("Cena", min_value=0.0)
         p_kat = st.selectbox("Kategoria", options=list(opcje_kat.keys()))
         
-        if st.button("Dodaj produkt"):
+        if st.button("Dodaj do bazy"):
             supabase.table("produkt").insert({
                 "nazwa": p_nazwa, "liczba": p_ilosc, "cena": p_cena, "kategoria_id": opcje_kat[p_kat]
             }).execute()
-            st.toast("Produkt dodany!")
             st.rerun()
 
-    # Usuwanie Produktu
     st.divider()
-    st.subheader("🗑️ Usuwanie")
+
+    # B. USUWANIE KONKRETNEJ ILOŚCI (ZDJĘCIE ZE STANU)
+    st.subheader("📉 Zdejmij ze stanu")
     if not df.empty:
-        prod_do_usuniecia = st.selectbox("Wybierz produkt do usunięcia", df["Produkt"].tolist())
-        id_do_usuniecia = df[df["Produkt"] == prod_do_usuniecia]["ID"].values[0]
-        if st.button("USUŃ DEFINITYWNIE", type="primary"):
-            supabase.table("produkt").delete().eq("id", int(id_do_usuniecia)).execute()
+        wybrany_prod = st.selectbox("Wybierz produkt", df["Produkt"].tolist())
+        # Pobieramy aktualną ilość z DataFrame
+        aktualna_ilosc = df[df["Produkt"] == wybrany_prod]["Ilość"].values[0]
+        wybrane_id = df[df["Produkt"] == wybrany_prod]["ID"].values[0]
+        
+        st.caption(f"Aktualnie w magazynie: {aktualna_ilosc}")
+        ilosc_do_odjecia = st.number_input("Ile sztuk usunąć?", min_value=1, max_value=int(aktualna_ilosc))
+
+        if st.button("Usuń wskazaną ilość", type="primary"):
+            nowa_ilosc = aktualna_ilosc - ilosc_do_odjecia
+            
+            if nowa_ilosc > 0:
+                # Aktualizujemy liczbę
+                supabase.table("produkt").update({"liczba": nowa_ilosc}).eq("id", int(wybrane_id)).execute()
+                st.toast(f"Usunięto {ilosc_do_odjecia} szt. Pozostało: {nowa_ilosc}")
+            else:
+                # Jeśli zero, pytamy czy usunąć cały rekord, albo po prostu zerujemy
+                supabase.table("produkt").update({"liczba": 0}).eq("id", int(wybrane_id)).execute()
+                st.toast("Produkt został wyzerowany w magazynie!")
+            
+            st.rerun()
+
+    # C. CAŁKOWITE USUNIĘCIE Z BAZY
+    with st.expander("🗑️ Usuń produkt całkowicie"):
+        prod_del = st.selectbox("Produkt do skasowania", df["Produkt"].tolist(), key="del_total")
+        id_del = df[df["Produkt"] == prod_del]["ID"].values[0]
+        if st.button("SKASUJ REKORD", type="secondary"):
+            supabase.table("produkt").delete().eq("id", int(id_del)).execute()
+            st.rerun()
+
+# --- 7. TABELA PODGLĄDU ---
+st.subheader("📋 Aktualna lista")
+st.dataframe(df[["Produkt", "Ilość", "Cena", "Kategoria"]], use_container_width=True, hide_index=True)
