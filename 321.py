@@ -12,21 +12,10 @@ supabase = init_connection()
 # --- 2. RÓŻOWE TŁO (CSS) ---
 st.markdown("""
     <style>
-    /* Główne tło strony */
-    .stApp {
-        background-color: #FFF0F5; 
-    }
-    
-    /* Tło panelu bocznego */
-    section[data-testid="stSidebar"] {
-        background-color: #FFB6C1 !important;
-    }
-
-    /* Dopasowanie koloru tekstu w panelu bocznym dla czytelności */
+    .stApp { background-color: #FFF0F5; }
+    section[data-testid="stSidebar"] { background-color: #FFB6C1 !important; }
     section[data-testid="stSidebar"] .stMarkdown, 
-    section[data-testid="stSidebar"] label {
-        color: #31333F !important;
-    }
+    section[data-testid="stSidebar"] label { color: #31333F !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -47,7 +36,7 @@ def get_data():
         })
     return pd.DataFrame(flat_data).sort_values(by="Produkt")
 
-# --- 4. INTERFEJS UŻYTKOWNIKA ---
+# --- 4. INTERFEJS ---
 st.set_page_config(page_title="System Zarządzania Magazynem", layout="wide")
 st.title("Zarządzanie Magazynem")
 
@@ -61,12 +50,7 @@ if not df.empty:
     m3.metric("Liczba kategorii", len(df["Kategoria"].unique()))
     st.divider()
 
-# --- 6. WYKRESY ---
-if not df.empty:
-    st.subheader("Stan asortymentu")
-    st.bar_chart(data=df, x="Produkt", y="Ilość", color="Kategoria")
-
-# --- 7. PANEL BOCZNY (OPERACJE) ---
+# --- 6. PANEL BOCZNY ---
 with st.sidebar:
     st.header("Panel sterowania")
 
@@ -74,10 +58,9 @@ with st.sidebar:
     with st.expander("Dodaj nowy produkt"):
         kat_res = supabase.table("kategorie").select("id, nazwa").execute()
         opcje_kat = {item['nazwa']: item['id'] for item in kat_res.data}
-        
         p_nazwa = st.text_input("Nazwa artykułu")
-        p_ilosc = st.number_input("Ilość początkowa", min_value=1)
-        p_cena = st.number_input("Cena jednostkowa", min_value=0.0)
+        p_ilosc = st.number_input("Ilość początkowa", min_value=1, key="add_qty")
+        p_cena = st.number_input("Cena jednostkowa", min_value=0.0, key="add_price")
         p_kat = st.selectbox("Wybierz kategorię", options=list(opcje_kat.keys()))
         
         if st.button("Zatwierdź produkt"):
@@ -88,22 +71,36 @@ with st.sidebar:
 
     st.divider()
 
-    # Zdejmowanie określonej ilości (Twoja prośba)
+    # WYDANIE Z MAGAZYNU (Poprawione zabezpieczenie przed błędem)
     st.subheader("Wydanie z magazynu")
     if not df.empty:
         wybrany_prod = st.selectbox("Produkt do wydania", df["Produkt"].tolist())
-        aktualna_ilosc = df[df["Produkt"] == wybrany_prod]["Ilość"].values[0]
-        wybrane_id = df[df["Produkt"] == wybrany_prod]["ID"].values[0]
+        row = df[df["Produkt"] == wybrany_prod].iloc[0]
+        aktualna_ilosc = int(row["Ilość"])
+        wybrane_id = int(row["ID"])
         
         st.write(f"Dostępny stan: **{aktualna_ilosc}**")
-        ile_usunac = st.number_input("Ilość do odjęcia", min_value=1, max_value=int(aktualna_ilosc))
+        
+        # POPRAWKA: Używamy unikalnego klucza zależnego od ilości, 
+        # aby Streamlit nie pamiętał starej wartości przekraczającej max.
+        ile_usunac = st.number_input(
+            "Ilość do odjęcia", 
+            min_value=1, 
+            max_value=max(1, aktualna_ilosc), 
+            value=1,
+            key=f"input_{wybrany_prod}_{aktualna_ilosc}" 
+        )
 
         if st.button("Aktualizuj stan", type="primary"):
             nowa_ilosc = aktualna_ilosc - ile_usunac
-            supabase.table("produkt").update({"liczba": nowa_ilosc}).eq("id", int(wybrane_id)).execute()
-            st.success(f"Zaktualizowano stan produktu: {wybrany_prod}")
+            supabase.table("produkt").update({"liczba": nowa_ilosc}).eq("id", wybrane_id).execute()
+            st.success(f"Zaktualizowano stan: {wybrany_prod}")
             st.rerun()
 
-# --- 8. TABELA PODGLĄDU ---
-st.subheader("Aktualny wykaz zapasów")
-st.dataframe(df[["Produkt", "Ilość", "Cena", "Kategoria"]], use_container_width=True, hide_index=True)
+# --- 7. TABELA I WYKRES ---
+if not df.empty:
+    st.subheader("Stan asortymentu")
+    st.bar_chart(data=df, x="Produkt", y="Ilość", color="Kategoria")
+    
+    st.subheader("Aktualny wykaz zapasów")
+    st.dataframe(df[["Produkt", "Ilość", "Cena", "Kategoria"]], use_container_width=True, hide_index=True)
